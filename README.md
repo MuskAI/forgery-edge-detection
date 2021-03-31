@@ -1,6 +1,27 @@
 
 # forgery-edge-detection
 大二到大三时期随刘春晓老师实验室锻炼图像篡改边缘检测项目,forgery-edge-detection下有两个文件夹,这是所有关于数据集生成和代码训练的代码
+- [forgery-edge-detection](#forgery-edge-detection)
+  * [make_tamper_dataset_from_coo](#make-tamper-dataset-from-coo)
+    + [camouflage_dataset_gen(COD10K)](#camouflage-dataset-gen-cod10k-)
+    + [for_compare_experiment](#for-compare-experiment)
+    + [new_start](#new-start)
+    + [PythonAPI](#pythonapi)
+    + [to_hey](#to-hey)
+    + [tools](#tools)
+  * [Mymodel](#mymodel)
+    + [datasets](#datasets)
+    + [model](#model)
+    + [runs](#runs)
+    + [save_model](#save-model)
+    + [test_tools](#test-tools)
+    + [train](#train)
+    + [utils](#utils)
+  * [functions.py](#functionspy)
+  * [utils.py](#utilspy)
+
+<small><i><a href='http://ecotrust-canada.github.io/markdown-toc/'>Table of contents generated with markdown-toc</a></i></small>
+
 
 
 ## make_tamper_dataset_from_coo
