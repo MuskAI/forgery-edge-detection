@@ -4,6 +4,8 @@ Time : 10/12
 description: 从公开数据生成数据集
 1. CASIA 1.0 2.0
 2. Coverage
+
+在你需要使用公开数据集训练的时候，用这部分代码
 """
 import os, sys
 import cv2 as cv
