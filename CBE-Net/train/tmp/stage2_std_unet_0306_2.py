@@ -2,8 +2,8 @@ import torch
 import torch.optim as optim
 import torch.utils.data.dataloader
 import os, sys
-sys.path.append('../')
-sys.path.append('../utils')
+sys.path.append('../../')
+sys.path.append('../../utils')
 import argparse
 import time, datetime
 from functions import my_f1_score, my_acc_score, my_precision_score, weighted_cross_entropy_loss, wce_huber_loss, \

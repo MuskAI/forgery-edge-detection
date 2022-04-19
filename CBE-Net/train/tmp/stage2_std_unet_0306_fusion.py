@@ -3,14 +3,18 @@ import torch.optim as optim
 import torch.utils.data.dataloader
 import os, sys
 
-sys.path.append('../')
-sys.path.append('../utils')
+sys.path.append('../../')
+sys.path.append('../../utils')
 import argparse
 import time, datetime
 from functions import my_f1_score, my_acc_score, my_precision_score, weighted_cross_entropy_loss, wce_huber_loss, \
-    map8_loss_ce, my_recall_score, cross_entropy_loss, wce_dice_huber_loss
-from datasets.dataloader_blur import TamperDataset
+    map8_loss_ce, my_recall_score, cross_entropy_loss, wce_dice_huber_loss,wce_dice_huber_loss_stage2
+from datasets.dataloader import TamperDataset
 from model.unet_two_stage_model_0306 import UNetStage1 as Net1
+from model.unet_two_stage_model_0306 import UNetStage2 as Net2
+from PIL import Image
+from torchvision.utils import make_grid
+import matplotlib.pyplot as plt
 from torch.optim import lr_scheduler
 from tensorboardX import SummaryWriter
 from utils import Logger, Averagvalue, weights_init, load_pretrained, save_mid_result, send_msn
@@ -20,16 +24,16 @@ from os.path import join, split, isdir, isfile, splitext, split, abspath, dirnam
 Created by HaoRan
 time: 2021/01/29
 description:
-1. 边缘模糊数据第一阶段双边缘训练
+1. 单独训练stage 2
 """
 
 """"""""""""""""""""""""""""""
 "          参数               "
 """"""""""""""""""""""""""""""
-name = '0321_stage1后缀为0306的模型，训练双边缘第一阶段,无八张图约束，边缘模糊数据'
+name = '0329_stage1&2_后缀为0306的模型,没有预训练'
 
 parser = argparse.ArgumentParser(description='PyTorch Training')
-parser.add_argument('--batch_size', default=12, type=int, metavar='BT',
+parser.add_argument('--batch_size', default=5, type=int, metavar='BT',
                     help='batch size')
 
 # =============== optimizer
@@ -44,7 +48,7 @@ parser.add_argument('--momentum', default=0.9, type=float, metavar='M',
                     help='momentum')
 parser.add_argument('--weight_decay', '--weight_decay', default=2e-2, type=float,
                     metavar='W', help='default weight decay')
-parser.add_argument('--stepsize', default=8, type=int,
+parser.add_argument('--stepsize', default=3, type=int,
                     metavar='SS', help='learning rate step size')
 parser.add_argument('--gamma', '--gm', default=0.1, type=float,
                     help='learning rate decay parameter: Gamma')
@@ -85,7 +89,6 @@ model_save_dir = join(model_save_dir, args.model_save_dir)
 if not isdir(model_save_dir):
     os.makedirs(model_save_dir)
 
-
 """"""""""""""""""""""""""""""
 "    ↓↓↓↓需要修改的参数↓↓↓↓     "
 """"""""""""""""""""""""""""""
@@ -111,18 +114,17 @@ def main():
     # 1 choose the data you want to use
     using_data = {'my_sp': True,
                   'my_cm': True,
-                  'template_casia_casia': False,
+                  'template_casia_casia': True,
                   'template_coco_casia': False,
                   'cod10k': True,
                   'casia': False,
                   'copy_move': False,
-                  'texture_sp': False,
+                  'texture_sp': True,
                   'texture_cm': True,
                   'columb': False,
-                  'negative': False,
+                  'negative': True,
                   'negative_casia': False,
                   }
-
 
     using_data_test = {'my_sp': False,
                        'my_cm': False,
@@ -136,56 +138,86 @@ def main():
                        'negative_casia': False,
                        }
     # 2 define 3 types
-    trainData = TamperDataset(stage_type='stage2', using_data=using_data, train_val_test_mode='train',device='413blur')
-    valData = TamperDataset(stage_type='stage2', using_data=using_data, train_val_test_mode='val',device='413blur')
-    testData = TamperDataset(stage_type='stage2', using_data=using_data_test, train_val_test_mode='test',device='413blur')
+    trainData = TamperDataset(stage_type='stage2', using_data=using_data, train_val_test_mode='train',device='413')
+    valData = TamperDataset(stage_type='stage2', using_data=using_data, train_val_test_mode='val',device='413')
+    testData = TamperDataset(stage_type='stage2', using_data=using_data_test, train_val_test_mode='test',device='413')
 
     # 3 specific dataloader
-    trainDataLoader = torch.utils.data.DataLoader(trainData, batch_size=args.batch_size, shuffle=True,num_workers=4,
+    trainDataLoader = torch.utils.data.DataLoader(trainData, batch_size=args.batch_size, num_workers=8, shuffle=True,
                                                   pin_memory=False)
-    valDataLoader = torch.utils.data.DataLoader(valData, batch_size=args.batch_size,  shuffle=True,num_workers=4)
+    valDataLoader = torch.utils.data.DataLoader(valData, batch_size=args.batch_size, num_workers=4, shuffle=True)
 
     testDataLoader = torch.utils.data.DataLoader(testData, batch_size=1, num_workers=0)
     # model
     model1 = Net1()
+    model2 = Net2()
     if torch.cuda.is_available():
         model1.cuda()
+        model2.cuda()
     else:
         model1.cpu()
+        model2.cpu()
 
     # 模型初始化
     # 如果没有这一步会根据正态分布自动初始化
     model1.apply(weights_init)
+    model2.apply(weights_init)
 
     # 模型可持续化
     optimizer1 = optim.Adam(model1.parameters(), lr=1e-2, betas=(0.9, 0.999), eps=1e-8)
+    optimizer2 = optim.Adam(model2.parameters(), lr=1e-2, betas=(0.9, 0.999), eps=1e-8)
+
     # 加载模型
-    if isfile(args.resume[0]):
+    if isfile(args.resume[0]) and isfile(args.resume[1]):
         print("=> loading checkpoint '{}'".format(args.resume))
         checkpoint1 = torch.load(args.resume[0])
+        checkpoint2 = torch.load(args.resume[1])
         model1.load_state_dict(checkpoint1['state_dict'])
         # optimizer1.load_state_dict(checkpoint1['optimizer'])
         ################################################
+        model2.load_state_dict(checkpoint2['state_dict'])
         # optimizer2.load_state_dict(checkpoint2['optimizer'])
-        print("=> loaded checkpoint '{}'".format(args.resume[0]))
+        print("=> loaded checkpoint '{}'".format(args.resume))
+    elif isfile(args.resume[0]) and not isfile(args.resume[1]):
+        print("=> loading checkpoint '{}'".format(args.resume))
+        checkpoint1 = torch.load(args.resume[0])
+        # checkpoint2 = torch.load(args.resume[1])
+        model1.load_state_dict(checkpoint1['state_dict'])
+        # optimizer1.load_state_dict(checkpoint1['optimizer'])
+        ################################################
+        # model2.load_state_dict(checkpoint2['state_dict'])
+        # optimizer2.load_state_dict(checkpoint2['optimizer'])
+        print("=> loaded checkpoint '{}'".format(args.resume))
+    elif not isfile(args.resume[0]) and isfile(args.resume[1]):
+        print("=> loading checkpoint '{}'".format(args.resume))
+        # checkpoint1 = torch.load(args.resume[0])
+        checkpoint2 = torch.load(args.resume[1])
+        # model1.load_state_dict(checkpoint1['state_dict'])
+        # optimizer1.load_state_dict(checkpoint1['optimizer'])
+        ################################################
+        model2.load_state_dict(checkpoint2['state_dict'])
+        optimizer2.load_state_dict(checkpoint2['optimizer'])
+        print("=> loaded checkpoint '{}'".format(args.resume))
     else:
         print("=> !!!!!!! checkpoint found at '{}'".format(args.resume))
 
     # 调整学习率
     scheduler1 = lr_scheduler.StepLR(optimizer1, step_size=args.stepsize, gamma=args.gamma)
+    scheduler2 = lr_scheduler.StepLR(optimizer2, step_size=args.stepsize, gamma=args.gamma)
     # 数据迭代器
     for epoch in range(args.start_epoch, args.maxepoch):
-        train_avg = train(model1=model1, optimizer1=optimizer1,
+        train_avg = train(model1=model1, model2=model2, optimizer1=optimizer1, optimizer2=optimizer2,
                           dataParser=trainDataLoader, epoch=epoch)
 
-        val_avg = val(model1=model1, dataParser=valDataLoader, epoch=epoch)
-        test(model1=model1, dataParser=testDataLoader, epoch=epoch)
+        val_avg = val(model1=model1, model2=model2, dataParser=valDataLoader, epoch=epoch)
+        test(model1=model1, model2=model2, dataParser=testDataLoader, epoch=epoch)
 
         """"""""""""""""""""""""""""""
         "          写入图             "
         """"""""""""""""""""""""""""""
         try:
-            writer.add_scalars('lr_per_epoch', {'stage1': scheduler1.get_lr()}, global_step=epoch)
+            writer.add_scalars('lr_per_epoch', {'stage1': scheduler1.get_lr(),
+                                                'stage2': scheduler2.get_lr()}, global_step=epoch)
             writer.add_scalars('tr-val_avg_loss_per_epoch', {'train': train_avg['loss_avg'],
                                                              'val': val_avg['loss_avg'],
                                                              },
@@ -196,14 +228,24 @@ def main():
                                                                     'recall': val_avg['recall_avg_stage2'],
                                                                     }, global_step=epoch)
 
-            # writer.add_scalars('tr_avg_map8_loss_per_epoch', {'map1': train_avg['map8_loss'][0],
-            #                                                   'map2': train_avg['map8_loss'][1],
-            #                                                   'map3': train_avg['map8_loss'][2],
-            #                                                   'map4': train_avg['map8_loss'][3],
-            #                                                   'map5': train_avg['map8_loss'][4],
-            #                                                   'map6': train_avg['map8_loss'][5],
-            #                                                   'map7': train_avg['map8_loss'][6],
-            #                                                   'map8': train_avg['map8_loss'][7]}, global_step=epoch)
+            writer.add_scalars('tr_avg_map8_loss_per_epoch', {'map1': train_avg['map8_loss'][0],
+                                                              'map2': train_avg['map8_loss'][1],
+                                                              'map3': train_avg['map8_loss'][2],
+                                                              'map4': train_avg['map8_loss'][3],
+                                                              'map5': train_avg['map8_loss'][4],
+                                                              'map6': train_avg['map8_loss'][5],
+                                                              'map7': train_avg['map8_loss'][6],
+                                                              'map8': train_avg['map8_loss'][7]}, global_step=epoch)
+            writer.add_scalars('val_avg_map8_loss_per_epoch', {'map1': train_avg['map8_loss'][0],
+                                                               'map2': val_avg['map8_loss'][1],
+                                                               'map3': val_avg['map8_loss'][2],
+                                                               'map4': val_avg['map8_loss'][3],
+                                                               'map5': val_avg['map8_loss'][4],
+                                                               'map6': val_avg['map8_loss'][5],
+                                                               'map7': val_avg['map8_loss'][6],
+                                                               'map8': val_avg['map8_loss'][7]}, global_step=epoch)
+
+
         except Exception as e:
             print(e)
 
@@ -217,11 +259,23 @@ def main():
                         val_avg['precision_avg_stage1'],
                         val_avg['accuracy_avg_stage1'],
                         val_avg['recall_avg_stage1'])
+        output_name2 = output_name_file_name % \
+                       (epoch, val_avg['loss_avg'],
+                        val_avg['f1_avg_stage2'],
+                        val_avg['precision_avg_stage2'],
+                        val_avg['accuracy_avg_stage2'],
+                        val_avg['recall_avg_stage2'])
+
         if epoch % 1 == 0:
             save_model_name_stage1 = os.path.join(args.model_save_dir, 'stage1_' + output_name1)
+            save_model_name_stage2 = os.path.join(args.model_save_dir, 'stage2_' + output_name2)
             torch.save({'epoch': epoch, 'state_dict': model1.state_dict(), 'optimizer': optimizer1.state_dict()},
                        save_model_name_stage1)
+            torch.save({'epoch': epoch, 'state_dict': model2.state_dict(), 'optimizer': optimizer2.state_dict()},
+                       save_model_name_stage2)
+
         scheduler1.step(epoch=epoch)
+        scheduler2.step(epoch=epoch)
     print('训练已完成!')
 
 
@@ -230,7 +284,7 @@ def main():
 """"""""""""""""""""""""""""""
 
 
-def train(model1, optimizer1, dataParser, epoch):
+def train(model1, model2, optimizer1, optimizer2, dataParser, epoch):
     # 读取数据的迭代器
 
     train_epoch = len(dataParser)
@@ -239,6 +293,8 @@ def train(model1, optimizer1, dataParser, epoch):
     data_time = Averagvalue()
     losses = Averagvalue()
     loss_stage1 = Averagvalue()
+    loss_stage2 = Averagvalue()
+
     map8_loss_value = [Averagvalue(), Averagvalue(),
                        Averagvalue(), Averagvalue(),
                        Averagvalue(), Averagvalue(),
@@ -247,6 +303,7 @@ def train(model1, optimizer1, dataParser, epoch):
 
     # switch to train mode
     model1.train()
+    model2.train()
     end = time.time()
     for batch_index, input_data in enumerate(dataParser):
         # 读取数据的时间
@@ -258,6 +315,7 @@ def train(model1, optimizer1, dataParser, epoch):
         labels_dou_edge = input_data['gt_dou_edge'].cuda()
         relation_map = input_data['relation_map']
 
+
         if torch.cuda.is_available():
             loss_8t = torch.zeros(()).cuda()
         else:
@@ -266,6 +324,8 @@ def train(model1, optimizer1, dataParser, epoch):
         with torch.set_grad_enabled(True):
             images.requires_grad = True
             optimizer1.zero_grad()
+            optimizer2.zero_grad()
+
             if images.shape[1] != 3 or images.shape[2] != 320:
                 continue
             # 网络输出
@@ -277,57 +337,66 @@ def train(model1, optimizer1, dataParser, epoch):
                 print(images.shape)
                 continue
 
+            rgb_pred_rgb = torch.cat((one_stage_outputs[0], images), 1)
+            two_stage_outputs = model2(rgb_pred_rgb, one_stage_outputs[1], one_stage_outputs[2], one_stage_outputs[3])
+
             """"""""""""""""""""""""""""""
             "         Loss 函数           "
             """"""""""""""""""""""""""""""
             ##########################################
             # deal with one stage issue
             # 建立loss
-            loss_stage_1 = wce_dice_huber_loss(one_stage_outputs[0], labels_dou_edge)
+            loss_stage_1 = wce_dice_huber_loss(one_stage_outputs[0], labels_band)
             ##############################################
             # deal with two stage issues
-            # for c_index, c in enumerate(two_stage_outputs[1:9]):
-            #     one_loss_t = map8_loss_ce(c, relation_map[c_index].cuda())
-            #     loss_8t += one_loss_t
-            #     # print(one_loss_t)
-            #     map8_loss_value[c_index].update(one_loss_t.item())
+            loss_stage_2 = wce_dice_huber_loss_stage2(one_stage_outputs[0],two_stage_outputs[0], labels_dou_edge)
+
+            for c_index, c in enumerate(two_stage_outputs[1:9]):
+                one_loss_t = map8_loss_ce(c, relation_map[c_index].cuda())
+                loss_8t += one_loss_t
+                # print(one_loss_t)
+                map8_loss_value[c_index].update(one_loss_t.item())
 
             # print(loss_stage_2)
             # print(map8_loss_value)
-            # loss = (loss_stage_2 * 12 + loss_8t) / 20
-            loss = loss_stage_1
+            loss = (loss_stage_2 * 12 + loss_8t) / 20 + loss_stage_1
             #######################################
             # 总的LOSS
             # print(type(loss_stage_2.item()))
             writer.add_scalars('loss_gather', {'stage_one_loss': loss_stage_1.item(),
+                                               'stage_two_fuse_loss': loss_stage_2.item()
                                                }, global_step=epoch * train_epoch + batch_index)
             ##########################################
             loss.backward()
 
             optimizer1.step()
+            optimizer2.step()
 
         # 将各种数据记录到专门的对象中
         losses.update(loss.item())
         loss_stage1.update(loss_stage_1.item())
+        loss_stage2.update(loss_stage_2.item())
         batch_time.update(time.time() - end)
         end = time.time()
 
         if batch_index % args.print_freq == 0:
             info = 'Epoch: [{0}/{1}][{2}/{3}] '.format(epoch, args.maxepoch, batch_index, train_epoch) + \
                    'Time {batch_time.val:.3f} (avg:{batch_time.avg:.3f}) '.format(batch_time=batch_time) + \
-                   '第一阶段Loss {loss.val:f} (avg:{loss.avg:f}) '.format(loss=loss_stage1)
+                   '两阶段总Loss {loss.val:f} (avg:{loss.avg:f}) '.format(loss=losses) + \
+                   '第一阶段Loss {loss.val:f} (avg:{loss.avg:f}) '.format(loss=loss_stage1) + \
+                   '第二阶段Loss {loss.val:f} (avg:{loss.avg:f}) '.format(loss=loss_stage2)
             print(info)
 
         if batch_index >= train_epoch:
             break
 
     return {'loss_avg': losses.avg,
-            # 'map8_loss': [map8_loss.avg for map8_loss in map8_loss_value],
+            'map8_loss': [map8_loss.avg for map8_loss in map8_loss_value],
             }
 
 
 @torch.no_grad()
-def val(model1, dataParser, epoch):
+def val(model1, model2, dataParser, epoch):
     # 读取数据的迭代器
 
     val_epoch = len(dataParser)
@@ -336,15 +405,25 @@ def val(model1, dataParser, epoch):
     data_time = Averagvalue()
     losses = Averagvalue()
     loss_stage1 = Averagvalue()
+    loss_stage2 = Averagvalue()
 
     f1_value_stage1 = Averagvalue()
     acc_value_stage1 = Averagvalue()
     recall_value_stage1 = Averagvalue()
     precision_value_stage1 = Averagvalue()
 
+    f1_value_stage2 = Averagvalue()
+    acc_value_stage2 = Averagvalue()
+    recall_value_stage2 = Averagvalue()
+    precision_value_stage2 = Averagvalue()
+    map8_loss_value = [Averagvalue(), Averagvalue(),
+                       Averagvalue(), Averagvalue(),
+                       Averagvalue(), Averagvalue(),
+                       Averagvalue(), Averagvalue(),
+                       Averagvalue(), Averagvalue()]
     # switch to train mode
     model1.eval()
-
+    model2.eval()
     end = time.time()
 
     for batch_index, input_data in enumerate(dataParser):
@@ -366,49 +445,65 @@ def val(model1, dataParser, epoch):
             images.requires_grad = False
             # 网络输出
             one_stage_outputs = model1(images)
-
+            rgb_pred_rgb = torch.cat((one_stage_outputs[0], images), 1)
+            two_stage_outputs = model2(rgb_pred_rgb, one_stage_outputs[1], one_stage_outputs[2], one_stage_outputs[3])
             """"""""""""""""""""""""""""""
             "         Loss 函数           "
             """"""""""""""""""""""""""""""
             ##########################################
             # deal with one stage issue
             # 建立loss
-            loss_stage_1 = wce_dice_huber_loss(one_stage_outputs[0], labels_dou_edge)
+            loss_stage_1 = wce_dice_huber_loss(one_stage_outputs[0], labels_band)
             ##############################################
             # deal with two stage issues
+            loss_stage_2 = wce_dice_huber_loss(two_stage_outputs[0], labels_dou_edge) * 12
 
-            # for c_index, c in enumerate(two_stage_outputs[1:9]):
-            #     one_loss_t = map8_loss_ce(c, relation_map[c_index].cuda())
-            #     loss_8t += one_loss_t
-            #     map8_loss_value[c_index].update(one_loss_t.item())
-            #
-            # loss_stage_2 += loss_8t
-            # loss = loss_stage_2 / 20
-            loss = loss_stage_1
+            for c_index, c in enumerate(two_stage_outputs[1:9]):
+                one_loss_t = map8_loss_ce(c, relation_map[c_index].cuda())
+                loss_8t += one_loss_t
+                map8_loss_value[c_index].update(one_loss_t.item())
+
+            loss_stage_2 += loss_8t
+            loss = loss_stage_2 / 20
+
             #######################################
             # 总的LOSS
             writer.add_scalar('val_stage_one_loss', loss_stage_1.item(), global_step=epoch * val_epoch + batch_index)
+            writer.add_scalar('val_stage_two_fuse_loss', loss_stage_2.item(),
+                              global_step=epoch * val_epoch + batch_index)
             # writer.add_scalar('val_fuse_loss_per_epoch', loss.item(), global_step=epoch * val_epoch + batch_index)
             ##########################################
 
         # 将各种数据记录到专门的对象中
         losses.update(loss.item())
         loss_stage1.update(loss_stage_1.item())
-        # loss_stage2.update(loss_stage_2.item())
+        loss_stage2.update(loss_stage_2.item())
 
         batch_time.update(time.time() - end)
         end = time.time()
 
-        f1score_stage1 = my_f1_score(one_stage_outputs[0], labels_dou_edge)
-        precisionscore_stage1 = my_precision_score(one_stage_outputs[0], labels_dou_edge)
-        accscore_stage1 = my_acc_score(one_stage_outputs[0], labels_dou_edge)
-        recallscore_stage1 = my_recall_score(one_stage_outputs[0], labels_dou_edge)
+        # 评价指标
+        f1score_stage2 = my_f1_score(two_stage_outputs[0], labels_dou_edge)
+        precisionscore_stage2 = my_precision_score(two_stage_outputs[0], labels_dou_edge)
+        accscore_stage2 = my_acc_score(two_stage_outputs[0], labels_dou_edge)
+        recallscore_stage2 = my_recall_score(two_stage_outputs[0], labels_dou_edge)
+
+        f1score_stage1 = my_f1_score(one_stage_outputs[0], labels_band)
+        precisionscore_stage1 = my_precision_score(one_stage_outputs[0], labels_band)
+        accscore_stage1 = my_acc_score(one_stage_outputs[0], labels_band)
+        recallscore_stage1 = my_recall_score(one_stage_outputs[0], labels_band)
 
         writer.add_scalar('val_f1_score_stage1', f1score_stage1, global_step=epoch * val_epoch + batch_index)
         writer.add_scalar('val_precision_score_stage1', precisionscore_stage1,
                           global_step=epoch * val_epoch + batch_index)
         writer.add_scalar('val_acc_score_stage1', accscore_stage1, global_step=epoch * val_epoch + batch_index)
         writer.add_scalar('val_recall_score_stage1', recallscore_stage1, global_step=epoch * val_epoch + batch_index)
+
+        writer.add_scalar('val_f1_score_stage2', f1score_stage2, global_step=epoch * val_epoch + batch_index)
+        writer.add_scalar('val_precision_score_stage2', precisionscore_stage2,
+                          global_step=epoch * val_epoch + batch_index)
+        writer.add_scalar('val_acc_score_stage2', accscore_stage2, global_step=epoch * val_epoch + batch_index)
+        writer.add_scalar('val_recall_score_stage2', recallscore_stage2, global_step=epoch * val_epoch + batch_index)
         ################################
 
         f1_value_stage1.update(f1score_stage1)
@@ -416,16 +511,28 @@ def val(model1, dataParser, epoch):
         acc_value_stage1.update(accscore_stage1)
         recall_value_stage1.update(recallscore_stage1)
 
+        f1_value_stage2.update(f1score_stage2)
+        precision_value_stage2.update(precisionscore_stage2)
+        acc_value_stage2.update(accscore_stage2)
+        recall_value_stage2.update(recallscore_stage2)
+
         if batch_index % args.print_freq == 0:
             info = 'Epoch: [{0}/{1}][{2}/{3}] '.format(epoch, args.maxepoch, batch_index, val_epoch) + \
                    'Time {batch_time.val:.3f} (avg:{batch_time.avg:.3f}) '.format(batch_time=batch_time) + \
                    '两阶段总Loss {loss.val:f} (avg:{loss.avg:f}) '.format(loss=losses) + \
                    '第一阶段Loss {loss.val:f} (avg:{loss.avg:f}) '.format(loss=loss_stage1) + \
+                   '第二阶段Loss {loss.val:f} (avg:{loss.avg:f}) '.format(loss=loss_stage2) + \
                    '第一阶段:f1_score {f1.val:f} (avg:{f1.avg:f}) '.format(f1=f1_value_stage1) + \
                    '第一阶段:precision_score: {precision.val:f} (avg:{precision.avg:f}) '.format(
                        precision=precision_value_stage1) + \
                    '第一阶段:acc_score {acc.val:f} (avg:{acc.avg:f})'.format(acc=acc_value_stage1) + \
-                   '第一阶段:recall_score {recall.val:f} (avg:{recall.avg:f})'.format(recall=recall_value_stage1)
+                   '第一阶段:recall_score {recall.val:f} (avg:{recall.avg:f})'.format(recall=recall_value_stage1) + \
+                   '第二阶段:f1_score {f1.val:f} (avg:{f1.avg:f}) '.format(f1=f1_value_stage2) + \
+                   '第二阶段:precision_score: {precision.val:f} (avg:{precision.avg:f}) '.format(
+                       precision=precision_value_stage2) + \
+                   '第二阶段:acc_score {acc.val:f} (avg:{acc.avg:f})'.format(acc=acc_value_stage2) + \
+                   '第二阶段:recall_score {recall.val:f} (avg:{recall.avg:f})'.format(recall=recall_value_stage2)
+
             print(info)
 
         if batch_index >= val_epoch:
@@ -436,11 +543,17 @@ def val(model1, dataParser, epoch):
             'precision_avg_stage1': precision_value_stage1.avg,
             'accuracy_avg_stage1': acc_value_stage1.avg,
             'recall_avg_stage1': recall_value_stage1.avg,
+
+            'f1_avg_stage2': f1_value_stage2.avg,
+            'precision_avg_stage2': precision_value_stage2.avg,
+            'accuracy_avg_stage2': acc_value_stage2.avg,
+            'recall_avg_stage2': recall_value_stage2.avg,
+            'map8_loss': [map8_loss.avg for map8_loss in map8_loss_value],
             }
 
 
 @torch.no_grad()
-def test(model1,dataParser, epoch):
+def test(model1, model2, dataParser, epoch):
     # 读取数据的迭代器
     # 变量保存
     batch_time = Averagvalue()
@@ -448,29 +561,30 @@ def test(model1,dataParser, epoch):
 
     # switch to train mode
     model1.eval()
+    model2.eval()
     end = time.time()
 
     for batch_index, input_data in enumerate(dataParser):
         # 读取数据的时间
         data_time.update(time.time() - end)
         # 准备输入数据
-
         images = input_data['tamper_image'].cuda()
-        labels_dou_edge = input_data['gt_dou_edge'].cuda()
-        # relation_map = input_data['relation_map']
         with torch.set_grad_enabled(False):
             images.requires_grad = False
             # 网络输出
             one_stage_outputs = model1(images)
 
+            rgb_pred_rgb = torch.cat((one_stage_outputs[0], images), 1)
+            two_stage_outputs = model2(rgb_pred_rgb, one_stage_outputs[1], one_stage_outputs[2], one_stage_outputs[3])
             """"""""""""""""""""""""""""""
             "         Loss 函数           "
             """"""""""""""""""""""""""""""
             ##########################################
             # deal with one stage issue
             # 建立loss
-            writer.add_images('one&two_stage_image_batch:%d' % (batch_index),
-                             one_stage_outputs[0], global_step=epoch)
+            z = torch.cat((one_stage_outputs[0], two_stage_outputs[0]), 0)
+            writer.add_image('one&two_stage_image_batch:%d' % (batch_index),
+                             make_grid(z, nrow=2), global_step=epoch)
 
 
 if __name__ == '__main__':

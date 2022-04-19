@@ -2,11 +2,13 @@
 @author: haoran
 tine : 2021-02-22
 description：
-这个file是使用标准的unet进行训练
+unet factor=2
+没有使用aspp，3月10日在54上运行
+
 """
 import os,sys
-sys.path.append('..')
-sys.path.append('../utils')
+sys.path.append('../..')
+sys.path.append('../../utils')
 
 import torch
 import torch.optim as optim
@@ -16,14 +18,12 @@ import time
 from functions import my_f1_score, my_acc_score, my_precision_score, weighted_cross_entropy_loss, wce_huber_loss, \
     wce_huber_loss_8, my_recall_score, cross_entropy_loss, wce_dice_huber_loss
 from datasets.dataloader import TamperDataset
-from model.unet_two_stage_model_0306_3 import UNetStage1 as Net
+from model.unet_two_stage_model_0306 import UNetStage1 as Net
 from torch.optim import lr_scheduler
 import matplotlib.pyplot as plt
 from tensorboardX import SummaryWriter
-from utils import Averagvalue, weights_init, load_pretrained, save_mid_result, send_msn
-from send_email import SendMail as send_email
+from utils import Averagvalue, weights_init, save_mid_result, send_msn
 from os.path import join, isdir, isfile, splitext, split, abspath, dirname
-# from check_image_pair import check_4dim_img_pair
 
 """
 Created by HaoRan
@@ -35,14 +35,14 @@ description:
 """"""""""""""""""""""""""""""
 "          参数               "
 """"""""""""""""""""""""""""""
-
+name = '0310_stage1_后缀为0306的模型,fine第一阶段'
 parser = argparse.ArgumentParser(description='PyTorch Training')
-parser.add_argument('--batch_size', default=10, type=int, metavar='BT',
+parser.add_argument('--batch_size', default=12, type=int, metavar='BT',
                     help='batch size')
 parser.add_argument('--model_save_dir', type=str, help='model_save_dir',
-                    default='../save_model/stage1_0306_3_aspp')
+                    default='../save_model/'+name)
 # =============== optimizer
-parser.add_argument('--lr', '--learning_rate', default=1e-2, type=float,
+parser.add_argument('--lr', '--learning_rate', default=1e-3, type=float,
                     metavar='LR', help='initial learning rate')
 parser.add_argument('--momentum', default=0.9, type=float, metavar='M',
                     help='momentum')
@@ -64,7 +64,8 @@ parser.add_argument('--print_freq', '-p', default=10, type=int,
 parser.add_argument('--gpu', default='0', type=str,
                     help='GPU ID')
 #####################resume##########################
-parser.add_argument('--resume', default='', type=str, metavar='PATH',
+parser.add_argument('--resume', default='/home/liu/chenhaoran/Mymodel/save_model/0310_stage1_后缀为0306的模型,fine第一阶段'
+                                        '/0310_stage1_后缀为0306的模型,fine第一阶段_checkpoint10-stage1-0.149544-f10.791111-precision0.951842-acc0.990172-recall0.680869.pth', type=str, metavar='PATH',
                     help='path to latest checkpoint (default: none)')
 
 parser.add_argument('--mid_result_index', type=list, help='mid_result_index', default=[0])
@@ -94,8 +95,8 @@ if not isdir(model_save_dir):
 """"""""""""""""""""""""""""""
 
 # tensorboard 使用
-writer = SummaryWriter('../runs/' + 'stage1_0306_3_aspp')
-output_name_file_name = 'stage1_0306_3_aspp-checkpoint%d-stage1-%f-f1%f-precision%f-acc%f-recall%f.pth'
+writer = SummaryWriter('../runs/' + name)
+output_name_file_name = name+'_checkpoint%d-stage1-%f-f1%f-precision%f-acc%f-recall%f.pth'
 email_header = 'Python'
 """"""""""""""""""""""""""""""
 "    ↑↑↑↑需要修改的参数↑↑↑↑     "
@@ -115,12 +116,12 @@ def main():
                   'template_coco_casia': False,
                   'cod10k': True,
                   'casia': False,
-                  'copy_move': False,
-                  'texture_sp': True,
-                  'texture_cm': True,
+                  'coverage': False,
                   'columb': False,
                   'negative': True,
                   'negative_casia': False,
+                  'texture_sp': True,
+                  'texture_cm': True,
                   }
     # using_data = {'my_sp': False,
     #               'my_cm': False,
@@ -128,14 +129,13 @@ def main():
     #               'template_coco_casia': False,
     #               'cod10k': True,
     #               'casia': False,
-    #               'copy_move': False,
-    #               'texture_sp': False,
-    #               'texture_cm': False,
+    #               'coverage': False,
     #               'columb': False,
     #               'negative': False,
     #               'negative_casia': False,
+    #               'texture_sp': False,
+    #               'texture_cm': False,
     #               }
-
     using_data_test = {'my_sp': False,
                        'my_cm': False,
                        'template_casia_casia': False,
@@ -148,9 +148,9 @@ def main():
                        'negative_casia': False,
                        }
     # 2 define 3 types
-    trainData = TamperDataset(stage_type='stage1', using_data=using_data, train_val_test_mode='train',device='libiao')
-    valData = TamperDataset(stage_type='stage1', using_data=using_data, train_val_test_mode='val',device='libiao')
-    testData = TamperDataset(stage_type='stage1', using_data=using_data_test, train_val_test_mode='test',device='libiao')
+    trainData = TamperDataset(stage_type='stage1', using_data=using_data, train_val_test_mode='train')
+    valData = TamperDataset(stage_type='stage1', using_data=using_data, train_val_test_mode='val')
+    testData = TamperDataset(stage_type='stage1', using_data=using_data_test, train_val_test_mode='test')
 
     # 3 specific dataloader
     trainDataLoader = torch.utils.data.DataLoader(trainData, batch_size=args.batch_size, num_workers=4, shuffle=True,
@@ -180,6 +180,7 @@ def main():
             checkpoint = torch.load(args.resume)
             model.load_state_dict(checkpoint['state_dict'])
             optimizer.load_state_dict(checkpoint['optimizer'])
+            args.start_epoch = checkpoint['epoch']+1
             print("=> loaded checkpoint '{}'".format(args.resume))
             # optimizer.load_state_dict(checkpoint['optimizer'])
 
@@ -198,8 +199,7 @@ def main():
     for epoch in range(args.start_epoch, args.maxepoch):
         train_avg = train(model=model, optimizer=optimizer, dataParser=trainDataLoader, epoch=epoch)
         val_avg = val(model=model, dataParser=valDataLoader, epoch=epoch)
-
-        test_avg = test(model=model, dataParser=testDataLoader, epoch=epoch)
+        test(model=model, dataParser=testDataLoader, epoch=epoch)
 
         """"""""""""""""""""""""""""""
         "          写入图            "
@@ -208,24 +208,19 @@ def main():
 
             writer.add_scalar('lr_per_epoch', scheduler.get_lr(), global_step=epoch)
             writer.add_scalars('tr-val-test_avg_loss_per_epoch', {'train': train_avg['loss_avg'],
-                                                                  'val': val_avg['loss_avg'],
-                                                                  'test': test_avg['loss_avg']},
+                                                                  'val': val_avg['loss_avg']},
                                global_step=epoch)
             writer.add_scalars('tr-val-test_avg_f1_per_epoch', {'train': train_avg['f1_avg'],
-                                                                'val': val_avg['f1_avg'],
-                                                                'test': test_avg['f1_avg']}, global_step=epoch)
+                                                                'val': val_avg['f1_avg']}, global_step=epoch)
 
             writer.add_scalars('tr-val-test_avg_precision_per_epoch', {'train': train_avg['precision_avg'],
-                                                                       'val': val_avg['precision_avg'],
-                                                                       'test': test_avg['precision_avg']},
+                                                                       'val': val_avg['precision_avg']},
                                global_step=epoch)
             writer.add_scalars('tr-val-test_avg_acc_per_epoch', {'train': train_avg['accuracy_avg'],
-                                                                 'val': val_avg['accuracy_avg'],
-                                                                 'test': test_avg['accuracy_avg']},
+                                                                 'val': val_avg['accuracy_avg']},
                                global_step=epoch)
             writer.add_scalars('tr-val-test_avg_recall_per_epoch', {'train': train_avg['recall_avg'],
-                                                                    'val': val_avg['recall_avg'],
-                                                                    'test': test_avg['recall_avg']},
+                                                                    'val': val_avg['recall_avg']},
                                global_step=epoch)
 
 
@@ -254,23 +249,6 @@ def main():
                        val_avg['accuracy_avg'],
                        val_avg['recall_avg'])
 
-        # try:
-        #     # send_msn(epoch, f1=val_avg['f1_avg'])
-        #     email_output_train = 'The train epoch:%d,f1:%f,loss:%f,precision:%f,accuracy:%f,recall:%f' % \
-        #                    (epoch, train_avg['loss_avg'], train_avg['f1_avg'], train_avg['precision_avg'],
-        #                     train_avg['accuracy_avg'], train_avg['recall_avg'])
-        #     email_output_val = 'The val epoch:%d,f1:%f,loss:%f,precision:%f,accuracy:%f,recall:%f' % \
-        #                          (epoch, val_avg['loss_avg'], val_avg['f1_avg'], val_avg['precision_avg'],
-        #                           val_avg['accuracy_avg'], val_avg['recall_avg'])
-        #     email_output_test = 'The test epoch:%d,f1:%f,loss:%f,precision:%f,accuracy:%f,recall:%f' % \
-        #                          (epoch, test_avg['loss_avg'], test_avg['f1_avg'], test_avg['precision_avg'],
-        #                           test_avg['accuracy_avg'], test_avg['recall_avg'])
-        #
-        #     email_output = email_output_train + '\n' + email_output_val + '\n' + email_output_test + '\n\n\n'
-        #     email_list.append(email_output)
-        #     send_email(str(email_header), context=str(email_list))
-        # except:
-        #     pass
 
         if epoch % 1 == 0:
             save_model_name = os.path.join(args.model_save_dir, output_name)
@@ -330,7 +308,7 @@ def train(model, optimizer, dataParser, epoch):
             """"""""""""""""""""""""""""""
 
             loss = wce_dice_huber_loss(outputs, labels)
-            writer.add_scalar('fuse_loss_per_epoch', loss.item(),
+            writer.add_scalar('loss_per_batch', loss.item(),
                               global_step=epoch * train_epoch + batch_index)
 
             loss.backward()
@@ -412,14 +390,12 @@ def val(model, dataParser, epoch):
 
         # 对读取的numpy类型数据进行调整
 
-
         if torch.cuda.is_available():
             loss = torch.zeros(1).cuda()
             loss_8t = torch.zeros(()).cuda()
         else:
             loss = torch.zeros(1)
             loss_8t = torch.zeros(())
-
         # 网络输出
         outputs = model(images)[0]
         # 这里放保存中间结果的代码
@@ -434,11 +410,9 @@ def val(model, dataParser, epoch):
         """"""""""""""""""""""""""""""
         "         Loss 函数           "
         """"""""""""""""""""""""""""""
-
         loss = wce_dice_huber_loss(outputs, labels)
         writer.add_scalar('val_fuse_loss_per_epoch', loss.item(),
                           global_step=epoch * val_epoch + batch_index)
-
         # 将各种数据记录到专门的对象中
         losses.update(loss.item())
         map8_loss_value.update(loss_8t.item())
@@ -485,99 +459,18 @@ def val(model, dataParser, epoch):
 
 @torch.no_grad()
 def test(model, dataParser, epoch):
-    # 读取数据的迭代器
-    test_epoch = len(dataParser)
-
-    # 变量保存
-    batch_time = Averagvalue()
-    data_time = Averagvalue()
-    losses = Averagvalue()
-    f1_value = Averagvalue()
-    acc_value = Averagvalue()
-    recall_value = Averagvalue()
-    precision_value = Averagvalue()
-    map8_loss_value = Averagvalue()
-
     # switch to test mode
     model.eval()
-    end = time.time()
-
     for batch_index, input_data in enumerate(dataParser):
-        # 读取数据的时间
-        data_time.update(time.time() - end)
-
         images = input_data['tamper_image']
-        labels = input_data['gt_band']
-
         if torch.cuda.is_available():
             images = images.cuda()
-            labels = labels.cuda()
-
-        if torch.cuda.is_available():
-            loss = torch.zeros(1).cuda()
-            loss_8t = torch.zeros(()).cuda()
-        else:
-            loss = torch.zeros(1)
-            loss_8t = torch.zeros(())
-
         # 网络输出
-        try:
-            outputs = model(images)[0]
-
-            """"""""""""""""""""""""""""""
-            "         Loss 函数           "
-            """"""""""""""""""""""""""""""
-
-            loss = wce_dice_huber_loss(outputs, labels)
-        except Exception as e:
-            continue
-        writer.add_scalar('val_fuse_loss_per_epoch', loss.item(),
-                          global_step=epoch * test_epoch + batch_index)
-
-        # 将各种数据记录到专门的对象中
-        losses.update(loss.item())
-        map8_loss_value.update(loss_8t.item())
-        batch_time.update(time.time() - end)
-        end = time.time()
-
-        # 评价指标
-        f1score = my_f1_score(outputs, labels)
-        precisionscore = my_precision_score(outputs, labels)
-        accscore = my_acc_score(outputs, labels)
-        recallscore = my_recall_score(outputs, labels)
-
-        writer.add_scalar('test_f1_score', f1score, global_step=epoch * test_epoch + batch_index)
-        writer.add_scalar('test_precision_score', precisionscore, global_step=epoch * test_epoch + batch_index)
-        writer.add_scalar('test_acc_score', accscore, global_step=epoch * test_epoch + batch_index)
-        writer.add_scalar('test_recall_score', recallscore, global_step=epoch * test_epoch + batch_index)
+        outputs = model(images)[0]
         writer.add_images('test_image_batch:%d' % (batch_index), outputs, global_step=epoch)
         ################################
 
-        f1_value.update(f1score)
-        precision_value.update(precisionscore)
-        acc_value.update(accscore)
-        recall_value.update(recallscore)
 
-        if batch_index % args.print_freq == 0:
-            info = 'TEST_Epoch: [{0}/{1}][{2}/{3}] '.format(epoch, args.maxepoch, batch_index, test_epoch) + \
-                   'Time {batch_time.val:.3f} (avg:{batch_time.avg:.3f}) '.format(batch_time=batch_time) + \
-                   'test_Loss {loss.val:f} (avg:{loss.avg:f}) '.format(loss=losses) + \
-                   'test_f1_score {f1.val:f} (avg:{f1.avg:f}) '.format(f1=f1_value) + \
-                   'test_precision_score: {precision.val:f} (avg:{precision.avg:f}) '.format(
-                       precision=precision_value) + \
-                   'test_acc_score {acc.val:f} (avg:{acc.avg:f})'.format(acc=acc_value) + \
-                   'test_recall_score {recall.val:f} (avg:{recall.avg:f})'.format(recall=recall_value)
-
-            print(info)
-
-        if batch_index >= test_epoch:
-            break
-
-    return {'loss_avg': losses.avg,
-            'f1_avg': f1_value.avg,
-            'precision_avg': precision_value.avg,
-            'accuracy_avg': acc_value.avg,
-            'recall_avg': recall_value.avg}
 
 
 if __name__ == '__main__':

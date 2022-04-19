@@ -4,8 +4,6 @@ from torch import nn
 from sklearn.metrics import precision_score,accuracy_score,f1_score,recall_score
 import torch.nn.functional as F
 
-
-
 def smooth_l1_loss(prediction, label):
     return torch.nn.SmoothL1Loss()(prediction,label)
 

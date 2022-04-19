@@ -3,15 +3,15 @@ import torch.optim as optim
 import torch.utils.data.dataloader
 import os, sys
 
-sys.path.append('../')
-sys.path.append('../utils')
+sys.path.append('../../')
+sys.path.append('../../utils')
 import argparse
 import time, datetime
 from functions import my_f1_score, my_acc_score, my_precision_score, weighted_cross_entropy_loss, wce_huber_loss, \
-    map8_loss_ce, my_recall_score, cross_entropy_loss, wce_dice_huber_loss,wce_dice_huber_loss_stage2
+    map8_loss_ce, my_recall_score, cross_entropy_loss, wce_dice_huber_loss
 from datasets.dataloader import TamperDataset
-from model.unet_two_stage_model_0306 import UNetStage1 as Net1
-from model.unet_two_stage_model_0306 import UNetStage2 as Net2
+from model.unet_two_stage_model_0306_3 import UNetStage1 as Net1
+from model.unet_two_stage_model_0306_3 import UNetStage2 as Net2
 from PIL import Image
 from torchvision.utils import make_grid
 import matplotlib.pyplot as plt
@@ -30,25 +30,25 @@ description:
 """"""""""""""""""""""""""""""
 "          参数               "
 """"""""""""""""""""""""""""""
-name = '0329_stage1&2_后缀为0306的模型,没有预训练'
+name = '0317_stage1&2_后缀为0306_3的模型,先训练好第一阶段再训练第二阶段_grayproblem'
 
 parser = argparse.ArgumentParser(description='PyTorch Training')
-parser.add_argument('--batch_size', default=5, type=int, metavar='BT',
+parser.add_argument('--batch_size', default=4, type=int, metavar='BT',
                     help='batch size')
 
 # =============== optimizer
 parser.add_argument('--lr', '--learning_rate', default=1e-2, type=float,
                     metavar='LR', help='initial learning rate')
 parser.add_argument('--resume', default=[
-    '',
-    ''], type=list, metavar='PATH',
+    '/home/liu/chenhaoran/Mymodel/save_model/0317_stage1&2_后缀为0306_3的模型,先训练好第一阶段再训练第二阶段_grayproblem/0310_stage1_后缀为0306_3的模型aspp第一阶段_全部数据_checkpoint7-stage1-0.152505-f10.782577-precision0.856709-acc0.989252-recall0.733250.pth',
+    '/home/liu/chenhaoran/Mymodel/save_model/0317_stage1&2_后缀为0306_3的模型,先训练好第一阶段再训练第二阶段_grayproblem//stage2_0317_stage1&2_后缀为0306_3的模型,先训练好第一阶段再训练第二阶段_grayproblem_checkpoint1-two_stage-0.091247-f10.669944-precision0.557548-acc0.991430-recall0.867044.pth'], type=list, metavar='PATH',
                     help='path to latest checkpoint (default: none)')
 
 parser.add_argument('--momentum', default=0.9, type=float, metavar='M',
                     help='momentum')
 parser.add_argument('--weight_decay', '--weight_decay', default=2e-2, type=float,
                     metavar='W', help='default weight decay')
-parser.add_argument('--stepsize', default=3, type=int,
+parser.add_argument('--stepsize', default=5, type=int,
                     metavar='SS', help='learning rate step size')
 parser.add_argument('--gamma', '--gm', default=0.1, type=float,
                     help='learning rate decay parameter: Gamma')
@@ -115,14 +115,14 @@ def main():
     using_data = {'my_sp': True,
                   'my_cm': True,
                   'template_casia_casia': True,
-                  'template_coco_casia': False,
+                  'template_coco_casia': True,
                   'cod10k': True,
                   'casia': False,
                   'copy_move': False,
                   'texture_sp': True,
                   'texture_cm': True,
                   'columb': False,
-                  'negative': True,
+                  'negative': False,
                   'negative_casia': False,
                   }
 
@@ -138,9 +138,9 @@ def main():
                        'negative_casia': False,
                        }
     # 2 define 3 types
-    trainData = TamperDataset(stage_type='stage2', using_data=using_data, train_val_test_mode='train',device='413')
-    valData = TamperDataset(stage_type='stage2', using_data=using_data, train_val_test_mode='val',device='413')
-    testData = TamperDataset(stage_type='stage2', using_data=using_data_test, train_val_test_mode='test',device='413')
+    trainData = TamperDataset(stage_type='stage2', using_data=using_data, train_val_test_mode='train')
+    valData = TamperDataset(stage_type='stage2', using_data=using_data, train_val_test_mode='val')
+    testData = TamperDataset(stage_type='stage2', using_data=using_data_test, train_val_test_mode='test')
 
     # 3 specific dataloader
     trainDataLoader = torch.utils.data.DataLoader(trainData, batch_size=args.batch_size, num_workers=8, shuffle=True,
@@ -164,7 +164,7 @@ def main():
     model2.apply(weights_init)
 
     # 模型可持续化
-    optimizer1 = optim.Adam(model1.parameters(), lr=1e-2, betas=(0.9, 0.999), eps=1e-8)
+    optimizer1 = optim.Adam(model1.parameters(), lr=1e-4, betas=(0.9, 0.999), eps=1e-8)
     optimizer2 = optim.Adam(model2.parameters(), lr=1e-2, betas=(0.9, 0.999), eps=1e-8)
 
     # 加载模型
@@ -196,10 +196,10 @@ def main():
         # optimizer1.load_state_dict(checkpoint1['optimizer'])
         ################################################
         model2.load_state_dict(checkpoint2['state_dict'])
-        optimizer2.load_state_dict(checkpoint2['optimizer'])
+        # optimizer2.load_state_dict(checkpoint2['optimizer'])
         print("=> loaded checkpoint '{}'".format(args.resume))
     else:
-        print("=> !!!!!!! checkpoint found at '{}'".format(args.resume))
+        print("=> !!!!!!! checkpoint not found at '{}'".format(args.resume))
 
     # 调整学习率
     scheduler1 = lr_scheduler.StepLR(optimizer1, step_size=args.stepsize, gamma=args.gamma)
@@ -315,7 +315,6 @@ def train(model1, model2, optimizer1, optimizer2, dataParser, epoch):
         labels_dou_edge = input_data['gt_dou_edge'].cuda()
         relation_map = input_data['relation_map']
 
-
         if torch.cuda.is_available():
             loss_8t = torch.zeros(()).cuda()
         else:
@@ -349,7 +348,7 @@ def train(model1, model2, optimizer1, optimizer2, dataParser, epoch):
             loss_stage_1 = wce_dice_huber_loss(one_stage_outputs[0], labels_band)
             ##############################################
             # deal with two stage issues
-            loss_stage_2 = wce_dice_huber_loss_stage2(one_stage_outputs[0],two_stage_outputs[0], labels_dou_edge)
+            loss_stage_2 = wce_dice_huber_loss(two_stage_outputs[0], labels_dou_edge)
 
             for c_index, c in enumerate(two_stage_outputs[1:9]):
                 one_loss_t = map8_loss_ce(c, relation_map[c_index].cuda())
@@ -359,7 +358,7 @@ def train(model1, model2, optimizer1, optimizer2, dataParser, epoch):
 
             # print(loss_stage_2)
             # print(map8_loss_value)
-            loss = (loss_stage_2 * 12 + loss_8t) / 20 + loss_stage_1
+            loss = (loss_stage_2 * 12 + loss_8t) / 20
             #######################################
             # 总的LOSS
             # print(type(loss_stage_2.item()))
@@ -378,6 +377,37 @@ def train(model1, model2, optimizer1, optimizer2, dataParser, epoch):
         loss_stage2.update(loss_stage_2.item())
         batch_time.update(time.time() - end)
         end = time.time()
+
+        # 评价指标
+        # f1score_stage2 = my_f1_score(two_stage_outputs[0], labels_dou_edge)
+        # precisionscore_stage2 = my_precision_score(two_stage_outputs[0], labels_dou_edge)
+        # accscore_stage2 = my_acc_score(two_stage_outputs[0], labels_dou_edge)
+        # recallscore_stage2 = my_recall_score(two_stage_outputs[0], labels_dou_edge)
+        #
+        # f1score_stage1 = my_f1_score(one_stage_outputs[0], labels_band)
+        # precisionscore_stage1 = my_precision_score(one_stage_outputs[0], labels_band)
+        # accscore_stage1 = my_acc_score(one_stage_outputs[0], labels_band)
+        # recallscore_stage1 = my_recall_score(one_stage_outputs[0], labels_band)
+
+        # writer.add_scalars('f1_score_stage', {'stage1':f1score_stage1,
+        #                                      'stage2':f1score_stage2}, global_step=epoch * train_epoch + batch_index)
+        # writer.add_scalars('precision_score_stage', {'stage1':precisionscore_stage1,
+        #                                              'stage2':precisionscore_stage2},global_step=epoch * train_epoch + batch_index)
+        # writer.add_scalars('acc_score_stage', {'stage1':accscore_stage1,
+        #                                       'stage2':accscore_stage2}, global_step=epoch * train_epoch + batch_index)
+        # writer.add_scalars('recall_score_stage', {'stage1':recallscore_stage1,
+        #                                           'stage2':recallscore_stage2}, global_step=epoch * train_epoch + batch_index)
+        # ################################
+
+        # f1_value_stage1.update(f1score_stage1)
+        # precision_value_stage1.update(precisionscore_stage1)
+        # acc_value_stage1.update(accscore_stage1)
+        # recall_value_stage1.update(recallscore_stage1)
+        #
+        # f1_value_stage2.update(f1score_stage2)
+        # precision_value_stage2.update(precisionscore_stage2)
+        # acc_value_stage2.update(accscore_stage2)
+        # recall_value_stage2.update(recallscore_stage2)
 
         if batch_index % args.print_freq == 0:
             info = 'Epoch: [{0}/{1}][{2}/{3}] '.format(epoch, args.maxepoch, batch_index, train_epoch) + \

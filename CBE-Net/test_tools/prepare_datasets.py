@@ -8,7 +8,7 @@ time :0330
 import os
 
 import cv2
-
+import shutil
 class Datasets:
     def __init__(self, model_name=None, using_data=None, datasets_path=None):
         """
@@ -60,7 +60,7 @@ class Datasets:
                 # 获取每张图片的名称
                 image_name_list = []
 
-                for idx, item in enumerate(path):
+                for idx, item in enumerate(os.listdir(path)):
                     if item.split('.')[-1] in ('jpg','png','JPG','PNG','tif','bmp'):
                         image_name_list.append(item)
                         # TODO 检查是否是图片
@@ -89,9 +89,17 @@ class Datasets:
         else:
             save_root = os.path.join(self.default_setting['save_root'],self.default_setting['model_name'])
 
-        if not os.path.exists(save_root):
+        if not os.path.exists(save_root) or os.path.getsize(save_root)<10000:
             print('开始创建根目录 {}'.format(save_root))
-            os.mkdir(save_root)
+            if not os.path.exists(save_root):
+                os.mkdir(save_root)
+            else:
+                print('目录 {} 存在，但为空，进行删除'.format(save_root))
+                if input('确定删除? 【y/n】:') == 'y':
+                    shutil.rmtree(save_root)
+                else:
+                    raise '路径 {} 已经存在，请重新选择model_name'.format(save_root)
+                os.mkdir(save_root)
 
             for i in self.datasets_dict:
                 print('开始创建子目录 {}'.format(os.path.join(save_root,i)))
@@ -101,6 +109,7 @@ class Datasets:
                 self.datasets_dict[i]['save_path'] = os.path.join(save_root, i, 'pred')
 
         else:
+
             raise '路径 {} 已经存在，请重新选择model_name'.format(save_root)
 
         print('保存路径创建完成！')

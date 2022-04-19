@@ -74,7 +74,7 @@ def aspp(x, input_shape, out_stride):
     x = torch.cat([b4_, b0_, b1_, b2_, b3_], dim=1)
     return x
 
-
+from torchvision.models.resnet import resnet18
 class Net(nn.Module):
     def __init__(self, input_shape=(320, 320, 3)):
         super(Net, self).__init__()
