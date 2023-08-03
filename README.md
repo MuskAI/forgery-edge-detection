@@ -1,5 +1,5 @@
 # forgery-edge-detection
-大二到大三时期随刘春晓老师实验室锻炼图像篡改边缘检测项目,forgery-edge-detection下有两个文件夹,这是所有关于数据集生成和代码训练的代码
+实验室锻炼图像篡改边缘检测项目,forgery-edge-detection下有两个文件夹,这是所有关于数据集生成和代码训练的代码
 ## 更新
 2023-5-22，有朋友要合成数据，我也放这里了：https://drive.google.com/file/d/18mww93yI6xsubtP608gzez4Dp_n38Z-x/view?usp=share_link
 
